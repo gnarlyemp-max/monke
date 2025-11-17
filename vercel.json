@@ -1,16 +1,6 @@
 {
-  "version": 2,
-  "builds": [
-    {
-      "src": "api/feed.py",
-      "use": "@vercel/python",
-      "config": { "pip": "api/requirements.txt" }
-    }
-  ],
-  "routes": [
-    {
-      "src": "/api/feed",
-      "dest": "api/feed.py"
-    }
+  "rewrites": [
+    { "source": "/genshin.xml", "destination": "/api/feed?game=genshin" },
+    { "source": "/hsr.xml", "destination": "/api/feed?game=hsr" }
   ]
 }
