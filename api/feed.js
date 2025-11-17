@@ -24,13 +24,13 @@ export default async function handler(req, res) {
     const CONFIG = {
       hsr: {
         label: "Honkai: Star Rail (id)",
-        linkBase: "https://genshin.hoyoverse.com/id/news/detail",
+        linkBase: "https://hsr.hoyoverse.com/id-id/news",
         api:
           "https://sg-public-api-static.hoyoverse.com/content_v2_user/app/113fe6d3b4514cdd/getContentList?iPage=1&iPageSize=20&sLangKey=id-id&isPreview=0&iChanId=248",
       },
       genshin: {
         label: "Genshin Impact (id)",
-        linkBase: "https://genshin.hoyoverse.com/id/news",
+        linkBase: "https://genshin.hoyoverse.com/id/news/detail",
         api:
           "https://sg-public-api-static.hoyoverse.com/content_v2_user/app/a1b1f9d3315447cc/getContentList?iAppId=32&iChanId=395&iPageSize=20&iPage=1&sLangKey=id-id",
       },
