@@ -16,7 +16,7 @@ class GameFeed:
         self.game = game
         self.game_config = game_config
         self.global_config = global_config
-        self.api_client = HoyolabAPIClient()
+        self.api_client = HoyolabAPIClient(lang=global_config.language)
     
     async def create_feeds(self) -> list[Path]:
         """

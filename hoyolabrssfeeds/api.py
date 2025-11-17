@@ -11,8 +11,11 @@ class HoyolabAPIClient:
     
     BASE_URL = "https://bbs-api-os.hoyolab.com/community/post/wapi"
     
-    def __init__(self):
-        self.client = httpx.AsyncClient(timeout=30.0)
+    def __init__(self, lang: str = "en-us"):
+        headers = {
+            "x-rpc-language": lang
+        }
+        self.client = httpx.AsyncClient(timeout=30.0, headers=headers)
     
     async def close(self):
         """Tutup koneksi HTTP client."""
