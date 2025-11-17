@@ -21,16 +21,25 @@ The Vercel deployment exposes a single serverless function endpoint:
     -   `atom` (default)
     -   `json`
     -   `all`
+-   `lang`: The language for the feed. Defaults to `en-us`. To set the language to Indonesian, use `id-id`.
 
 ### Examples
 
+-   **Get an Atom feed for Genshin Impact in Indonesian:**
+    ```
+    /api/feed?game=genshin&format=atom&lang=id-id
+    ```
 -   **Get an Atom feed for Genshin Impact:**
     ```
     /api/feed?game=genshin&format=atom
     ```
--   **Get a JSON feed for Star Rail:**
+-   **Get a JSON feed for Honkai: Star Rail:**
     ```
     /api/feed?game=starrail&format=json
+    ```
+-   **Get an Atom feed for Zenless Zone Zero:**
+    ```
+    /api/feed?game=zenless&format=atom
     ```
 -   **Generate all feeds for all games:**
     ```

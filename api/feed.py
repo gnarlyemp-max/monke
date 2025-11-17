@@ -17,12 +17,13 @@ class handler(BaseHTTPRequestHandler):
         
         game = query_params.get('game', ['all'])[0]
         format_type = query_params.get('format', ['atom'])[0]
+        lang = query_params.get('lang', ['en-us'])[0]
 
         feeds_dir = Path('/tmp/feeds')
         feeds_dir.mkdir(exist_ok=True)
 
         temp_config = {
-            'language': 'en-us',
+            'language': lang,
             'category_size': 15,
         }
 
