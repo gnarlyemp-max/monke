@@ -6,10 +6,64 @@ from pathlib import Path
 import sys
 
 # Add the project root to the Python path to ensure imports work
-sys.path.append(str(Path(__file__).parent.parent))
+project_root = Path(__file__).parent.parent
+sys.path.insert(0, str(project_root))
 
-from hoyolabrssfeeds.cli import generate_feeds
-from hoyolabrssfeeds.config import FeedConfigLoader
+# Add src directory to Python path for the hoyolabrssfeeds package
+src_path = project_root / "src"
+if str(src_path) not in sys.path:
+    sys.path.insert(0, str(src_path))
+
+# Debug: Print Python path to help with troubleshooting
+print("Python path:", sys.path)
+
+# Verify the module can be found
+try:
+    import importlib.util
+    spec = importlib.util.find_spec("hoyolabrssfeeds")
+    if spec is None:
+        print("Module 'hoyolabrssfeeds' not found in path")
+        # Try adding the src directory directly
+        hoyolab_module_path = src_path / "hoyolabrssfeeds"
+        if hoyolab_module_path.exists():
+            print(f"Module directory found at: {hoyolab_module_path}")
+            sys.path.insert(0, str(hoyolab_module_path))
+        else:
+            print(f"Module directory not found at: {hoyolab_module_path}")
+    else:
+        print(f"Module 'hoyolabrssfeeds' found at: {spec.origin}")
+except Exception as e:
+    print(f"Error checking module: {e}")
+
+# Import the required functions
+try:
+    from hoyolabrssfeeds.cli import generate_feeds
+    from hoyolabrssfeeds.config import FeedConfigLoader
+    print("Successfully imported hoyolabrssfeeds modules")
+except ImportError as e:
+    print(f"Import error: {e}")
+    # Fallback: try to import directly from files
+    try:
+        # Add the specific module path to sys.path
+        module_path = src_path / "hoyolabrssfeeds"
+        sys.path.insert(0, str(module_path))
+        
+        import cli
+        import config
+        generate_feeds = cli.generate_feeds
+        FeedConfigLoader = config.FeedConfigLoader
+        print("Successfully imported modules using fallback method")
+    except Exception as fallback_error:
+        print(f"Fallback import failed: {fallback_error}")
+        # Last resort: try to import from the current directory structure
+        try:
+            sys.path.insert(0, str(project_root))
+            from src.hoyolabrssfeeds.cli import generate_feeds
+            from src.hoyolabrssfeeds.config import FeedConfigLoader
+            print("Successfully imported using project root path")
+        except Exception as final_error:
+            print(f"Final import attempt failed: {final_error}")
+            raise
 
 async def main(request):
     """
