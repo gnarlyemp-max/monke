@@ -1,39 +1,48 @@
-// api/feed.js  (for Vercel / Node 18+)
-// Usage:
-//   /api/feed?type=hsr
-//   /api/feed?type=genshin
-// You can rewrite /hsr.xml -> /api/feed?type=hsr and /genshin.xml -> /api/feed?type=genshin
+// api/feed.js  -- Node/Next-compatible serverless handler (works on localhost & Vercel Node runtimes)
+// Usage (local): http://localhost:3000/api/feed?type=genshin  or ?type=hsr
+// Node 18+ provides global fetch & AbortController.
 
-export default async function handler(req) {
+export default async function handler(req, res) {
+  // Simple logger for local debugging
+  const log = (...args) => {
+    if (typeof console !== "undefined") console.log("[/api/feed]", ...args);
+  };
+
+  // send helper for consistent responses
+  const sendJSON = (obj, status = 200) => {
+    res.setHeader("Content-Type", "application/json; charset=utf-8");
+    res.status(status).send(JSON.stringify(obj));
+  };
+
+  const sendText = (txt, status = 200) => {
+    res.setHeader("Content-Type", "text/plain; charset=utf-8");
+    res.status(status).send(txt);
+  };
+
   try {
-    // --- robust URL parsing: some runtimes give req.url as path only ---
+    // robust URL parsing: req.url may be absolute or path-only
     let urlObj;
     try {
-      // try absolute (works in some runtimes)
-      urlObj = new URL(req.url);
+      urlObj = new URL(req.url); // works if absolute
     } catch (e) {
-      // fallback: build using Host header or VERCEL_URL
-      const host =
-        (req.headers && (req.headers.get ? req.headers.get("host") : req.headers.host)) ||
-        process.env.VERCEL_URL ||
-        "monke-five.vercel.app";
-      const base = host.includes("://") ? host : `https://${host}`;
+      const hostHeader = req.headers && (req.headers.host || req.headers.get && req.headers.get("host"));
+      const host = hostHeader || "localhost:3000";
+      const base = host.includes("://") ? host : `http://${host}`;
       urlObj = new URL(req.url, base);
     }
-    const type = (urlObj.searchParams.get("type") || "").toLowerCase();
 
+    const type = (urlObj.searchParams.get("type") || "").toLowerCase();
     if (!["hsr", "genshin"].includes(type)) {
-      return new Response(
-        JSON.stringify({
+      return sendJSON(
+        {
           ok: false,
           message: "Provide ?type=hsr or ?type=genshin",
           example: "/api/feed?type=hsr",
-        }),
-        { status: 400, headers: { "Content-Type": "application/json" } }
+        },
+        400
       );
     }
 
-    // ===== CONFIG =====
     const CONFIG = {
       hsr: {
         label: "Honkai: Star Rail (id)",
@@ -51,20 +60,45 @@ export default async function handler(req) {
 
     const conf = CONFIG[type];
 
-    // fetch upstream
-    const resp = await fetch(conf.api, {
-      headers: {
-        Accept: "application/json, text/plain, */*",
-        Referer: conf.linkBase,
-        "User-Agent": "Mozilla/5.0 (compatible; feed-builder/1.0)",
-      },
-    });
+    // Abortable fetch with timeout to avoid "eternal loading"
+    const FETCH_TIMEOUT_MS = 10000; // 10 seconds
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
 
-    if (!resp.ok) {
-      return new Response("Upstream fetch failed", { status: 502 });
+    let upstreamResp;
+    try {
+      upstreamResp = await fetch(conf.api, {
+        headers: {
+          Accept: "application/json, text/plain, */*",
+          Referer: conf.linkBase,
+          "User-Agent": "Mozilla/5.0 (compatible; feed-builder/1.0)",
+        },
+        signal: controller.signal,
+      });
+    } catch (fetchErr) {
+      clearTimeout(timeoutId);
+      log("fetch error:", fetchErr && fetchErr.message ? fetchErr.message : fetchErr);
+      // If aborted, give specific message
+      if (fetchErr && fetchErr.name === "AbortError") {
+        return sendJSON({ ok: false, message: "Upstream fetch timed out (10s)" }, 504);
+      }
+      return sendJSON({ ok: false, message: "Upstream fetch failed", detail: String(fetchErr) }, 502);
+    }
+    clearTimeout(timeoutId);
+
+    if (!upstreamResp.ok) {
+      log("upstream non-ok", upstreamResp.status, upstreamResp.statusText);
+      return sendJSON({ ok: false, message: "Upstream returned non-OK", status: upstreamResp.status }, 502);
     }
 
-    const json = await resp.json();
+    let json;
+    try {
+      json = await upstreamResp.json();
+    } catch (e) {
+      log("json parse error", e);
+      return sendJSON({ ok: false, message: "Failed to parse upstream JSON" }, 502);
+    }
+
     const posts = json && json.data && Array.isArray(json.data.list) ? json.data.list : [];
 
     // helpers
@@ -80,7 +114,6 @@ export default async function handler(req) {
 
     function parseDateToRfc822(dtStr) {
       if (!dtStr) return new Date().toUTCString();
-      // dtStr like "YYYY-MM-DD HH:MM:SS" -> try to parse as UTC-ish
       try {
         const iso = dtStr.replace(" ", "T") + "Z";
         const d = new Date(iso);
@@ -91,80 +124,53 @@ export default async function handler(req) {
       }
     }
 
-    // image extraction (works for HSR and Genshin patterns)
     function extractImageUrl(item) {
       if (!item) return null;
-
-      // Try parsing sExt if it's a JSON string
       try {
         let ext = item.sExt;
         if (typeof ext === "string" && ext.trim()) ext = JSON.parse(ext);
         if (ext && typeof ext === "object") {
-          // HSR often uses news-poster
-          if (Array.isArray(ext["news-poster"]) && ext["news-poster"][0] && ext["news-poster"][0].url) {
+          if (Array.isArray(ext["news-poster"]) && ext["news-poster"][0] && ext["news-poster"][0].url)
             return ext["news-poster"][0].url;
-          }
-          // common: banner
-          if (Array.isArray(ext.banner) && ext.banner[0] && ext.banner[0].url) {
-            return ext.banner[0].url;
-          }
-          // fallback: value
-          if (Array.isArray(ext.value) && ext.value[0] && ext.value[0].url) {
-            return ext.value[0].url;
-          }
-          // news-poster sometimes under news-poster or news_poster variants
-          if (Array.isArray(ext["news_poster"]) && ext["news_poster"][0] && ext["news_poster"][0].url) {
+          if (Array.isArray(ext.banner) && ext.banner[0] && ext.banner[0].url) return ext.banner[0].url;
+          if (Array.isArray(ext.value) && ext.value[0] && ext.value[0].url) return ext.value[0].url;
+          if (Array.isArray(ext["news_poster"]) && ext["news_poster"][0] && ext["news_poster"][0].url)
             return ext["news_poster"][0].url;
-          }
         }
       } catch (e) {
         // ignore parse error
       }
-
-      // fallback: find first <img src="..."> in sContent
       if (item.sContent && typeof item.sContent === "string") {
         const m = item.sContent.match(/<img[^>]+src=(?:["'])([^"']+)(?:["'])/i);
         if (m) return m[1];
       }
-
       return null;
     }
 
-    // Build RSS items
+    // Build RSS
     const now = new Date().toUTCString();
     const itemsXml = posts
       .map((p) => {
         const id =
-          p && (p.iInfoId !== undefined && p.iInfoId !== null)
-            ? String(p.iInfoId)
-            : Math.random().toString(36).slice(2);
+          p && (p.iInfoId !== undefined && p.iInfoId !== null) ? String(p.iInfoId) : Math.random().toString(36).slice(2);
         const title = escapeXml(p.sTitle || p.title || "No title");
         const intro = p.sIntro || "";
         const pubDate = parseDateToRfc822(p.dtStartTime || p.dtCreateTime);
         const link = p.sUrl && p.sUrl.trim() ? p.sUrl : `${conf.linkBase}/detail/${id}`;
-
         const imageUrl = extractImageUrl(p);
 
         let descriptionCdata = "<![CDATA[";
-        if (imageUrl) {
-          // include image tag
-          descriptionCdata += `<img src="${imageUrl}" alt="${escapeXml(p.sTitle || "")}" /><br/><br/>`;
-        }
+        if (imageUrl) descriptionCdata += `<img src="${imageUrl}" alt="${escapeXml(p.sTitle || "")}" /><br/><br/>`;
         if (intro) {
           descriptionCdata += intro;
         } else if (p.sContent) {
-          // strip tags and take a short excerpt
           const text = p.sContent.replace(/<[^>]+>/g, "").trim();
           descriptionCdata += text.slice(0, 600) + (text.length > 600 ? "…" : "");
-        } else {
-          descriptionCdata += "";
         }
         descriptionCdata += `<br/><br/>Read more: <a href="${link}">${link}</a>`;
         descriptionCdata += "]]>";
 
-        // Choose a reasonable mime fallback if image exists (we don't know exact type)
-        const enclosure =
-          imageUrl ? `<enclosure url="${escapeXml(imageUrl)}" type="image/*" />` : "";
+        const enclosure = imageUrl ? `<enclosure url="${escapeXml(imageUrl)}" type="image/*" />` : "";
 
         return `
       <item>
@@ -189,15 +195,11 @@ export default async function handler(req) {
   </channel>
 </rss>`;
 
-    return new Response(rss, {
-      status: 200,
-      headers: {
-        "Content-Type": "application/rss+xml; charset=utf-8",
-        "Cache-Control": "no-cache, no-store, max-age=0",
-      },
-    });
+    res.setHeader("Content-Type", "application/rss+xml; charset=utf-8");
+    res.setHeader("Cache-Control", "no-cache, no-store, max-age=0");
+    return res.status(200).send(rss);
   } catch (err) {
-    console.error(err);
-    return new Response("Internal error", { status: 500 });
+    console.error("[/api/feed] internal error:", err);
+    return sendText("Internal error", 500);
   }
 }
