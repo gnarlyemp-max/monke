@@ -3,7 +3,8 @@
   "builds": [
     {
       "src": "api/feed.py",
-      "use": "@vercel/python"
+      "use": "@vercel/python",
+      "config": { "pip": "api/requirements.txt" }
     }
   ],
   "routes": [
