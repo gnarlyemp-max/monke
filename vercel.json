@@ -23,11 +23,5 @@
       "src": "/(.*)\\.(xml|json)",
       "dest": "/tmp/feeds/$1.$2"
     }
-  ],
-  "functions": {
-    "api/feed.py": {
-      "memory": 1024,
-      "maxDuration": 10
-    }
-  }
+  ]
 }
