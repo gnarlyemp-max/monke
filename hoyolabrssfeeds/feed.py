@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from feedgen.feed import FeedGenerator
 from .models import Game, GameConfig, GlobalConfig, NewsItem
-from .api import HoyolabAPIClient
+from .api import HoyolabNewsScraper
 from .localization import get_message
 
 
@@ -16,7 +16,7 @@ class GameFeed:
         self.game = game
         self.game_config = game_config
         self.global_config = global_config
-        self.api_client = HoyolabAPIClient(lang=global_config.language)
+        self.scraper = HoyolabNewsScraper(lang=global_config.language)
     
     async def create_feeds(self) -> list[Path]:
         """
@@ -29,8 +29,8 @@ class GameFeed:
         
         category_size = self.game_config.category_size or self.global_config.category_size
         
-        async with self.api_client:
-            news_items = await self.api_client.get_news(
+        async with self.scraper:
+            news_items = await self.scraper.get_news(
                 self.game,
                 page_size=category_size
             )

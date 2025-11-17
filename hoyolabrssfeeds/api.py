@@ -1,86 +1,90 @@
-"""Klien API untuk mengambil berita dari Hoyolab."""
+"""Web scraper for fetching news from the official Hoyoverse news pages."""
 
 import httpx
 from typing import Optional
+from bs4 import BeautifulSoup
+from datetime import datetime, timezone
 from .models import Game, NewsItem
 from .localization import get_message
 
+class HoyolabNewsScraper:
+    """Scraper for the official Hoyoverse news websites."""
 
-class HoyolabAPIClient:
-    """Klien untuk berinteraksi dengan API Hoyolab."""
-    
-    BASE_URL = "https://bbs-api-os.hoyolab.com/community/post/wapi"
-    
+    BASE_URLS = {
+        Game.GENSHIN: "https://genshin.hoyoverse.com/{lang}/news",
+        Game.STARRAIL: "https://hsr.hoyoverse.com/{lang}/news",
+        Game.HONKAI: "https://honkaiimpact3.hoyoverse.com/{lang}/news",
+        Game.ZENLESS: "https://zenless.hoyoverse.com/{lang}/news",
+        Game.TEARS_OF_THEMIS: "https://tot.hoyoverse.com/{lang}/news",
+    }
+
     def __init__(self, lang: str = "en-us"):
-        headers = {
-            "x-rpc-language": lang
-        }
-        self.client = httpx.AsyncClient(timeout=30.0, headers=headers)
-    
+        self.lang = lang
+        self.client = httpx.AsyncClient(timeout=30.0)
+
     async def close(self):
-        """Tutup koneksi HTTP client."""
+        """Close the HTTP client connection."""
         await self.client.aclose()
-    
+
     async def get_news(
         self,
         game: Game,
-        page_size: int = 20,
-        category_id: Optional[int] = None
+        page_size: int = 20
     ) -> list[NewsItem]:
         """
-        Ambil berita dari Hoyolab untuk game tertentu.
+        Fetch news from the official website for a specific game.
         
         Args:
-            game: Game yang akan diambil beritanya
-            page_size: Jumlah item per halaman
-            category_id: ID kategori berita (None untuk semua)
+            game: The game to fetch news for
+            page_size: The number of items per page
         
         Returns:
-            List of NewsItem objects
+            A list of NewsItem objects
         """
-        params = {
-            "gids": game.game_id,
-            "page_size": page_size,
-            "type": 1,
-        }
-        
-        if category_id is not None:
-            params["type"] = category_id
+        url = self.BASE_URL[game].format(lang=self.lang)
         
         try:
-            response = await self.client.get(
-                f"{self.BASE_URL}/getNewsList",
-                params=params
-            )
+            response = await self.client.get(url)
             response.raise_for_status()
-            data = response.json()
             
-            if data.get("retcode") != 0:
-                return []
-            
-            news_list = data.get("data", {}).get("list", [])
+            soup = BeautifulSoup(response.text, "lxml")
+            news_list = soup.select(".news-item")
             
             items = []
-            for post in news_list:
-                post_data = post.get("post", {})
-                items.append(NewsItem(
-                    post_id=str(post_data.get("post_id", "")),
-                    title=post_data.get("subject", ""),
-                    content=post_data.get("content", ""),
-                    created_at=post_data.get("created_at", 0),
-                    url=f"https://www.hoyolab.com/article/{post_data.get('post_id', '')}",
-                    cover_url=post_data.get("cover", ""),
-                    author=post.get("user", {}).get("nickname", "Hoyolab")
-                ))
+            for item in news_list[:page_size]:
+                title_element = item.select_one(".news-title")
+                time_element = item.select_one(".news-time")
+                link_element = item.select_one("a")
+                
+                if title_element and time_element and link_element:
+                    title = title_element.text.strip()
+                    
+                    # The date is in MM/DD/YYYY format, convert to timestamp
+                    date_str = time_element.text.strip()
+                    created_at = int(datetime.strptime(date_str, "%m/%d/%Y").replace(tzinfo=timezone.utc).timestamp())
+                    
+                    article_url = link_element["href"]
+                    if not article_url.startswith("http"):
+                        base_url = self.BASE_URL[game].split("/news")[0].format(lang=self.lang)
+                        article_url = f"{base_url}{article_url}"
+
+                    items.append(NewsItem(
+                        post_id=article_url.split("/")[-1],
+                        title=title,
+                        content="",  # Content is not available on the list page
+                        created_at=created_at,
+                        url=article_url,
+                        author=game.display_name
+                    ))
             
             return items
             
         except Exception as e:
             print(get_message("api_error", error=str(e)))
             return []
-    
+
     async def __aenter__(self):
         return self
-    
+
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         await self.close()
