@@ -1,0 +1,24 @@
+[project]
+name = "hoyolab-rss-feeds"
+version = "1.0.0"
+description = "Generator RSS untuk berita game Hoyoverse dalam bahasa Indonesia"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "click>=8.3.1",
+    "feedgen>=1.0.0",
+    "httpx>=0.28.1",
+    "pydantic>=2.12.4",
+    "tomli>=2.3.0",
+    "tomli-w>=1.2.0",
+]
+
+[project.scripts]
+hoyolab-rss-feeds = "hoyolabrssfeeds.cli:main"
+
+[build-system]
+requires = ["setuptools>=45", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
