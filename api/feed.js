@@ -1,128 +1,170 @@
-// api/feed.js
-export const config = { runtime: "edge" };
-
-/**
- * Config for each feed.
- * - genshin: uses the genshin API you provided
- * - hsr: uses the hsr API you provided
- *
- * Both configured for Indonesian (id-id) and pageSize 20 by default (you can change).
- */
-const FEEDS = {
-  genshin: {
-    label: "Genshin Impact (id)",
-    apiBase:
-      "https://sg-public-api-static.hoyoverse.com/content_v2_user/app/a1b1f9d3315447cc/getContentList",
-    // query params (note some endpoints use iAppId vs iPage)
-    qs: {
-      iAppId: "32",
-      iChanId: "395",
-      iPageSize: "20",
-      iPage: "1",
-      sLangKey: "id-id"
-    },
-    linkBase: "https://genshin.hoyoverse.com/id/news",
-    safeHeadersReferer: "https://genshin.hoyoverse.com/"
-  },
-  hsr: {
-    label: "Honkai: Star Rail (id)",
-    apiBase:
-      "https://sg-public-api-static.hoyoverse.com/content_v2_user/app/113fe6d3b4514cdd/getContentList",
-    qs: {
-      iPage: "1",
-      iPageSize: "20",
-      sLangKey: "id-id",
-      isPreview: "0",
-      iChanId: "248"
-    },
-    linkBase: "https://www.hoyoverse.com/hsr/news",
-    safeHeadersReferer: "https://www.hoyoverse.com/"
-  }
-};
+// api/feed.js  (for Vercel / Node 18+)
+// Usage:
+//   /api/feed?type=hsr
+//   /api/feed?type=genshin
+// You can rewrite /hsr.xml -> /api/feed?type=hsr and /genshin.xml -> /api/feed?type=genshin
 
 export default async function handler(req) {
   try {
     const url = new URL(req.url);
-    // prefer ?game=genshin or path like /genshin.xml via rewrite
-    const gameParam =
-      (url.searchParams.get("game") ||
-        url.pathname.split("/").pop().replace(".xml", ""))?.toLowerCase() ||
-      "genshin";
+    const type = (url.searchParams.get("type") || "").toLowerCase();
 
-    const cfg = FEEDS[gameParam];
-    if (!cfg) return new Response(`Unknown feed "${gameParam}"`, { status: 404 });
+    if (!["hsr", "genshin"].includes(type)) {
+      return new Response(
+        JSON.stringify({
+          ok: false,
+          message: "Provide ?type=hsr or ?type=genshin",
+          example: "/api/feed?type=hsr",
+        }),
+        { status: 400, headers: { "Content-Type": "application/json" } }
+      );
+    }
 
-    // Build query string (we'll allow single-page fetch; change page size above)
-    const qs = new URLSearchParams(cfg.qs).toString();
-    const apiUrl = `${cfg.apiBase}?${qs}`;
-
-    const headers = {
-      accept: "application/json, text/plain, */*",
-      referer: cfg.safeHeadersReferer,
-      origin: new URL(cfg.safeHeadersReferer).origin,
-      "user-agent":
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36"
+    // ===== CONFIG =====
+    const CONFIG = {
+      hsr: {
+        label: "Honkai: Star Rail (id)",
+        linkBase: "https://www.hoyoverse.com/hsr/news",
+        // your working HSR API (you gave this)
+        api:
+          "https://sg-public-api-static.hoyoverse.com/content_v2_user/app/113fe6d3b4514cdd/getContentList?iPage=1&iPageSize=20&sLangKey=id-id&isPreview=0&iChanId=248",
+      },
+      genshin: {
+        label: "Genshin Impact (id)",
+        linkBase: "https://genshin.hoyoverse.com/id/news",
+        // genshin API you gave (iAppId=32, iChanId=395 for id feed)
+        api:
+          "https://sg-public-api-static.hoyoverse.com/content_v2_user/app/a1b1f9d3315447cc/getContentList?iAppId=32&iChanId=395&iPageSize=20&iPage=1&sLangKey=id-id",
+      },
     };
 
-    const resp = await fetch(apiUrl, { headers });
+    const conf = CONFIG[type];
+
+    // fetch upstream
+    const resp = await fetch(conf.api, {
+      headers: {
+        Accept: "application/json, text/plain, */*",
+        Referer: conf.linkBase,
+        "User-Agent": "Mozilla/5.0 (compatible; feed-builder/1.0)",
+      },
+    });
+
     if (!resp.ok) {
-      console.error("Upstream fetch failed", resp.status, await resp.text());
       return new Response("Upstream fetch failed", { status: 502 });
     }
 
-    const j = await resp.json();
-    if (!j || j.retcode !== 0 || !j.data) {
-      console.warn("Upstream returned no data or non-zero retcode", j);
+    const json = await resp.json();
+    const posts = (json && json.data && json.data.list) ? json.data.list : [];
+
+    // helpers
+    function escapeXml(s) {
+      if (!s) return "";
+      return String(s)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&apos;");
     }
-    const posts = Array.isArray(j?.data?.list) ? j.data.list : [];
 
-    // Build RSS
-    const now = new Date().toUTCString();
-    const channelTitle = `${cfg.label} feed`;
-    const linkBase = cfg.linkBase || "";
+    function parseDateToRfc822(dtStr) {
+      if (!dtStr) return new Date().toUTCString();
+      // dtStr like "YYYY-MM-DD HH:MM:SS" -> assume UTC-ish and append Z
+      try {
+        const iso = dtStr.replace(" ", "T") + "Z";
+        const d = new Date(iso);
+        if (isNaN(d.getTime())) return new Date().toUTCString();
+        return d.toUTCString();
+      } catch (e) {
+        return new Date().toUTCString();
+      }
+    }
 
-    const itemsXml = posts
-      .map((p) => {
-        const id = String(p.iInfoId ?? hashFallback(p.sTitle, p.dtStartTime));
-        const title = escapeXml(p.sTitle ?? "No title");
-        const intro = p.sIntro ?? "";
-        const introSafe = safeCData(intro);
-        const pubDate = parseDateToRfc822(p.dtStartTime) ?? new Date().toUTCString();
-        const link = p.sUrl && p.sUrl.length ? p.sUrl : `${linkBase}/detail/${id}`;
+    // image extraction (works for HSR and Genshin patterns)
+    function extractImageUrl(item) {
+      if (!item) return null;
 
-        // banner from sExt if available
-        let descHtml = introSafe;
-        if (p.sExt) {
-          try {
-            const ext = JSON.parse(p.sExt);
-            const mediaKey = ext.banner ? "banner" : ext.value ? "value" : null;
-            if (mediaKey && Array.isArray(ext[mediaKey]) && ext[mediaKey].length) {
-              const bannerUrl = ext[mediaKey][0].url;
-              descHtml = `<img src="${escapeXml(bannerUrl)}" alt="banner"/><br/>${descHtml}`;
-            }
-          } catch (e) {
-            // ignore malformed sExt
+      // sExt may be stringified JSON
+      try {
+        let ext = item.sExt;
+        if (typeof ext === "string" && ext.trim()) ext = JSON.parse(ext);
+        if (ext && typeof ext === "object") {
+          // HSR: news-poster
+          if (Array.isArray(ext["news-poster"]) && ext["news-poster"][0] && ext["news-poster"][0].url) {
+            return ext["news-poster"][0].url;
+          }
+          // common: banner
+          if (Array.isArray(ext.banner) && ext.banner[0] && ext.banner[0].url) {
+            return ext.banner[0].url;
+          }
+          // fallback: value array
+          if (Array.isArray(ext.value) && ext.value[0] && ext.value[0].url) {
+            return ext.value[0].url;
+          }
+          // news-poster spelled differently?
+          if (Array.isArray(ext["news-poster"]) && ext["news-poster"][0] && ext["news-poster"][0].url) {
+            return ext["news-poster"][0].url;
           }
         }
+      } catch (e) {
+        // ignore parse error
+      }
 
-        return `
-<item>
-  <title>${title}</title>
-  <link>${escapeXml(link)}</link>
-  <guid isPermaLink="false">${escapeXml(id)}</guid>
-  <description><![CDATA[${descHtml}]]></description>
-  <pubDate>${escapeXml(pubDate)}</pubDate>
-</item>`;
-      })
-      .join("\n");
+      // fallback: find first <img src="..."> in sContent
+      if (item.sContent) {
+        const m = item.sContent.match(/<img[^>]+src=(?:["'])([^"']+)(?:["'])/i);
+        if (m) return m[1];
+      }
+
+      // also check sExt.news-poster url maybe in a different key name
+      return null;
+    }
+
+    // Build RSS items
+    const now = new Date().toUTCString();
+    const itemsXml = posts.map(p => {
+      const id = String(p.iInfoId || p.iInfoId === 0 ? p.iInfoId : Math.random().toString(36).slice(2));
+      const title = escapeXml(p.sTitle || p.title || "No title");
+      const intro = p.sIntro || "";
+      const pubDate = parseDateToRfc822(p.dtStartTime || p.dtCreateTime);
+      const link = (p.sUrl && p.sUrl.trim()) ? p.sUrl : `${conf.linkBase}/detail/${id}`;
+
+      const imageUrl = extractImageUrl(p);
+
+      let descriptionCdata = "<![CDATA[";
+      if (imageUrl) {
+        descriptionCdata += `<img src="${imageUrl}" alt="${escapeXml(p.sTitle || "")}" /><br/><br/>`;
+      }
+      if (intro) {
+        descriptionCdata += escapeXml(intro);
+      } else if (p.sContent) {
+        // strip tags and take a short excerpt
+        const text = p.sContent.replace(/<[^>]+>/g, "").trim();
+        descriptionCdata += escapeXml(text.slice(0, 600)) + (text.length > 600 ? "…" : "");
+      }
+      descriptionCdata += `<br/><br/>Read more: <a href="${link}">${link}</a>`;
+      descriptionCdata += "]]>";
+
+      const enclosure = imageUrl ? `<enclosure url="${escapeXml(imageUrl)}" type="image/jpeg" />` : "";
+
+      return `
+      <item>
+        <title>${title}</title>
+        <link>${escapeXml(link)}</link>
+        <guid isPermaLink="false">${escapeXml(id)}</guid>
+        <description>${descriptionCdata}</description>
+        ${enclosure}
+        <pubDate>${escapeXml(pubDate)}</pubDate>
+      </item>`;
+    }).join("\n");
 
     const rss = `<?xml version="1.0" encoding="UTF-8"?>
 <rss version="2.0">
   <channel>
-    <title>${escapeXml(channelTitle)}</title>
-    <link>${escapeXml(linkBase)}</link>
-    <description>${escapeXml(channelTitle)}</description>
-    <lastBuildDate>${escapeXml(now)}</lastBuildDate>
+    <title>${escapeXml(conf.label)} feed</title>
+    <link>${escapeXml(conf.linkBase)}</link>
+    <description>${escapeXml(conf.label)} feed</description>
+    <lastBuildDate>${now}</lastBuildDate>
     ${itemsXml}
   </channel>
 </rss>`;
@@ -131,44 +173,11 @@ export default async function handler(req) {
       status: 200,
       headers: {
         "Content-Type": "application/rss+xml; charset=utf-8",
-        "Cache-Control": "no-cache, no-store, max-age=0"
-      }
+        "Cache-Control": "no-cache, no-store, max-age=0",
+      },
     });
   } catch (err) {
-    console.error("Internal error", err);
+    console.error(err);
     return new Response("Internal error", { status: 500 });
   }
-}
-
-/* Helpers */
-function escapeXml(s) {
-  if (s == null) return "";
-  return String(s)
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&apos;");
-}
-function safeCData(s) {
-  if (s == null) return "";
-  return String(s).replace(/]]>/g, "]]]]><![CDATA[>");
-}
-function parseDateToRfc822(dtStr) {
-  if (!dtStr) return null;
-  try {
-    // upstream appears to use "YYYY-MM-DD HH:MM:SS"
-    const iso = dtStr.replace(" ", "T") + "Z";
-    const d = new Date(iso);
-    if (isNaN(d)) return null;
-    return d.toUTCString();
-  } catch (e) {
-    return null;
-  }
-}
-function hashFallback(title = "", date = "") {
-  const s = `${title}||${date}`;
-  let h = 0;
-  for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0;
-  return "h" + Math.abs(h).toString(36);
 }
