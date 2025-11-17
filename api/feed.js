@@ -6,8 +6,21 @@
 
 export default async function handler(req) {
   try {
-    const url = new URL(req.url);
-    const type = (url.searchParams.get("type") || "").toLowerCase();
+    // --- robust URL parsing: some runtimes give req.url as path only ---
+    let urlObj;
+    try {
+      // try absolute (works in some runtimes)
+      urlObj = new URL(req.url);
+    } catch (e) {
+      // fallback: build using Host header or VERCEL_URL
+      const host =
+        (req.headers && (req.headers.get ? req.headers.get("host") : req.headers.host)) ||
+        process.env.VERCEL_URL ||
+        "monke-five.vercel.app";
+      const base = host.includes("://") ? host : `https://${host}`;
+      urlObj = new URL(req.url, base);
+    }
+    const type = (urlObj.searchParams.get("type") || "").toLowerCase();
 
     if (!["hsr", "genshin"].includes(type)) {
       return new Response(
@@ -25,14 +38,12 @@ export default async function handler(req) {
       hsr: {
         label: "Honkai: Star Rail (id)",
         linkBase: "https://www.hoyoverse.com/hsr/news",
-        // your working HSR API (you gave this)
         api:
           "https://sg-public-api-static.hoyoverse.com/content_v2_user/app/113fe6d3b4514cdd/getContentList?iPage=1&iPageSize=20&sLangKey=id-id&isPreview=0&iChanId=248",
       },
       genshin: {
         label: "Genshin Impact (id)",
         linkBase: "https://genshin.hoyoverse.com/id/news",
-        // genshin API you gave (iAppId=32, iChanId=395 for id feed)
         api:
           "https://sg-public-api-static.hoyoverse.com/content_v2_user/app/a1b1f9d3315447cc/getContentList?iAppId=32&iChanId=395&iPageSize=20&iPage=1&sLangKey=id-id",
       },
@@ -54,7 +65,7 @@ export default async function handler(req) {
     }
 
     const json = await resp.json();
-    const posts = (json && json.data && json.data.list) ? json.data.list : [];
+    const posts = json && json.data && Array.isArray(json.data.list) ? json.data.list : [];
 
     // helpers
     function escapeXml(s) {
@@ -69,7 +80,7 @@ export default async function handler(req) {
 
     function parseDateToRfc822(dtStr) {
       if (!dtStr) return new Date().toUTCString();
-      // dtStr like "YYYY-MM-DD HH:MM:SS" -> assume UTC-ish and append Z
+      // dtStr like "YYYY-MM-DD HH:MM:SS" -> try to parse as UTC-ish
       try {
         const iso = dtStr.replace(" ", "T") + "Z";
         const d = new Date(iso);
@@ -84,12 +95,12 @@ export default async function handler(req) {
     function extractImageUrl(item) {
       if (!item) return null;
 
-      // sExt may be stringified JSON
+      // Try parsing sExt if it's a JSON string
       try {
         let ext = item.sExt;
         if (typeof ext === "string" && ext.trim()) ext = JSON.parse(ext);
         if (ext && typeof ext === "object") {
-          // HSR: news-poster
+          // HSR often uses news-poster
           if (Array.isArray(ext["news-poster"]) && ext["news-poster"][0] && ext["news-poster"][0].url) {
             return ext["news-poster"][0].url;
           }
@@ -97,13 +108,13 @@ export default async function handler(req) {
           if (Array.isArray(ext.banner) && ext.banner[0] && ext.banner[0].url) {
             return ext.banner[0].url;
           }
-          // fallback: value array
+          // fallback: value
           if (Array.isArray(ext.value) && ext.value[0] && ext.value[0].url) {
             return ext.value[0].url;
           }
-          // news-poster spelled differently?
-          if (Array.isArray(ext["news-poster"]) && ext["news-poster"][0] && ext["news-poster"][0].url) {
-            return ext["news-poster"][0].url;
+          // news-poster sometimes under news-poster or news_poster variants
+          if (Array.isArray(ext["news_poster"]) && ext["news_poster"][0] && ext["news_poster"][0].url) {
+            return ext["news_poster"][0].url;
           }
         }
       } catch (e) {
@@ -111,43 +122,51 @@ export default async function handler(req) {
       }
 
       // fallback: find first <img src="..."> in sContent
-      if (item.sContent) {
+      if (item.sContent && typeof item.sContent === "string") {
         const m = item.sContent.match(/<img[^>]+src=(?:["'])([^"']+)(?:["'])/i);
         if (m) return m[1];
       }
 
-      // also check sExt.news-poster url maybe in a different key name
       return null;
     }
 
     // Build RSS items
     const now = new Date().toUTCString();
-    const itemsXml = posts.map(p => {
-      const id = String(p.iInfoId || p.iInfoId === 0 ? p.iInfoId : Math.random().toString(36).slice(2));
-      const title = escapeXml(p.sTitle || p.title || "No title");
-      const intro = p.sIntro || "";
-      const pubDate = parseDateToRfc822(p.dtStartTime || p.dtCreateTime);
-      const link = (p.sUrl && p.sUrl.trim()) ? p.sUrl : `${conf.linkBase}/detail/${id}`;
+    const itemsXml = posts
+      .map((p) => {
+        const id =
+          p && (p.iInfoId !== undefined && p.iInfoId !== null)
+            ? String(p.iInfoId)
+            : Math.random().toString(36).slice(2);
+        const title = escapeXml(p.sTitle || p.title || "No title");
+        const intro = p.sIntro || "";
+        const pubDate = parseDateToRfc822(p.dtStartTime || p.dtCreateTime);
+        const link = p.sUrl && p.sUrl.trim() ? p.sUrl : `${conf.linkBase}/detail/${id}`;
 
-      const imageUrl = extractImageUrl(p);
+        const imageUrl = extractImageUrl(p);
 
-      let descriptionCdata = "<![CDATA[";
-      if (imageUrl) {
-        descriptionCdata += `<img src="${imageUrl}" alt="${escapeXml(p.sTitle || "")}" /><br/><br/>`;
-      }
-      if (intro) {
-        descriptionCdata += escapeXml(intro);
-      } else if (p.sContent) {
-        // strip tags and take a short excerpt
-        const text = p.sContent.replace(/<[^>]+>/g, "").trim();
-        descriptionCdata += escapeXml(text.slice(0, 600)) + (text.length > 600 ? "…" : "");
-      }
-      descriptionCdata += `<br/><br/>Read more: <a href="${link}">${link}</a>`;
-      descriptionCdata += "]]>";
+        let descriptionCdata = "<![CDATA[";
+        if (imageUrl) {
+          // include image tag
+          descriptionCdata += `<img src="${imageUrl}" alt="${escapeXml(p.sTitle || "")}" /><br/><br/>`;
+        }
+        if (intro) {
+          descriptionCdata += intro;
+        } else if (p.sContent) {
+          // strip tags and take a short excerpt
+          const text = p.sContent.replace(/<[^>]+>/g, "").trim();
+          descriptionCdata += text.slice(0, 600) + (text.length > 600 ? "…" : "");
+        } else {
+          descriptionCdata += "";
+        }
+        descriptionCdata += `<br/><br/>Read more: <a href="${link}">${link}</a>`;
+        descriptionCdata += "]]>";
 
-      const enclosure = imageUrl ? `<enclosure url="${escapeXml(imageUrl)}" type="image/jpeg" />` : "";
+        // Choose a reasonable mime fallback if image exists (we don't know exact type)
+        const enclosure =
+          imageUrl ? `<enclosure url="${escapeXml(imageUrl)}" type="image/*" />` : "";
 
-      return `
+        return `
       <item>
         <title>${title}</title>
         <link>${escapeXml(link)}</link>
@@ -156,7 +175,8 @@ export default async function handler(req) {
         ${enclosure}
         <pubDate>${escapeXml(pubDate)}</pubDate>
       </item>`;
-    }).join("\n");
+      })
+      .join("\n");
 
     const rss = `<?xml version="1.0" encoding="UTF-8"?>
 <rss version="2.0">
