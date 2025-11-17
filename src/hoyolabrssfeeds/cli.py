@@ -17,25 +17,18 @@ from .localization import get_message
     default=Path("./hoyolab-rss-feeds.toml"),
     help=get_message("help_config"),
 )
-@click.option(
-    "-o",
-    "--output",
-    type=click.Path(path_type=Path),
-    default=Path("./feeds"),
-    help=get_message("help_output"),
-)
-def main(config: Path, output: Path):
+def main(config: Path):
     """
-    Hoyolab RSS Feeds - Generator RSS untuk berita game Hoyoverse.
+    Hoyolab RSS Feeds - Generate RSS/JSON feeds for Hoyoverse games.
     
-    Aplikasi ini membuat feed RSS dari berita resmi game Hoyoverse
-    seperti Genshin Impact, Honkai: Star Rail, dan lainnya.
+    Creates feeds from official Hoyoverse game news like
+    Genshin Impact, Honkai: Star Rail, and more.
     """
-    asyncio.run(generate_feeds(config, output))
+    asyncio.run(generate_feeds(config))
 
 
-async def generate_feeds(config_path: Path, output_dir: Path):
-    """Generate all RSS feeds berdasarkan konfigurasi."""
+async def generate_feeds(config_path: Path):
+    """Generate all feeds based on configuration."""
     loader = FeedConfigLoader(config_path)
     
     if not config_path.exists():
@@ -44,9 +37,13 @@ async def generate_feeds(config_path: Path, output_dir: Path):
         sys.exit(0)
     
     try:
-        all_configs = await loader.get_all_feed_configs()
-        feed_collection = GameFeedCollection.from_configs(all_configs)
-        await feed_collection.create_feeds(output_dir)
+        global_config = loader.get_global_config()
+        game_configs = loader.get_all_game_configs()
+        feed_collection = GameFeedCollection.from_configs(game_configs, global_config)
+        await feed_collection.create_feeds()
+    except ValueError as e:
+        print(str(e))
+        sys.exit(1)
     except Exception as e:
         print(get_message("error_occurred", error=str(e)))
         sys.exit(1)

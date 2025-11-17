@@ -1,7 +1,6 @@
 """Model data untuk konfigurasi feed dan game."""
 
 from enum import Enum
-from pathlib import Path
 from typing import Optional
 from pydantic import BaseModel, Field
 
@@ -33,19 +32,35 @@ class Game(str, Enum):
         return GAME_NAMES.get(self.value, self.value)
 
 
-class FeedConfig(BaseModel):
-    """Konfigurasi untuk feed RSS game."""
-    enabled: bool = Field(default=True, description="Aktifkan feed untuk game ini")
-    title: str = Field(description="Judul feed RSS")
-    description: str = Field(description="Deskripsi feed RSS")
-    link: str = Field(description="Link ke halaman berita game")
-    output_file: str = Field(description="Nama file output RSS")
-    language: str = Field(default="id", description="Kode bahasa (id untuk Indonesia)")
-    max_items: int = Field(default=20, description="Jumlah maksimal item dalam feed")
-    category_filter: Optional[list[int]] = Field(
-        default=None,
-        description="Filter berdasarkan kategori berita (None = semua)"
-    )
+class FeedOutput(BaseModel):
+    """Konfigurasi output untuk satu format feed."""
+    path: Optional[str] = None
+    url: Optional[str] = None
+
+
+class FeedFormats(BaseModel):
+    """Format feed yang tersedia (JSON dan Atom)."""
+    json_feed: Optional[FeedOutput] = Field(default=None, alias="json")
+    atom_feed: Optional[FeedOutput] = Field(default=None, alias="atom")
+    
+    class Config:
+        populate_by_name = True
+
+
+class GameConfig(BaseModel):
+    """Konfigurasi untuk satu game."""
+    feed: FeedFormats = Field(default_factory=FeedFormats)
+    categories: Optional[list[str]] = None
+    category_size: Optional[int] = None
+    title: Optional[str] = None
+    icon: Optional[str] = None
+    description: Optional[str] = None
+
+
+class GlobalConfig(BaseModel):
+    """Konfigurasi global."""
+    language: str = Field(default="en-us")
+    category_size: int = Field(default=15)
 
 
 class NewsItem(BaseModel):
@@ -57,3 +72,4 @@ class NewsItem(BaseModel):
     url: str
     cover_url: Optional[str] = None
     author: Optional[str] = None
+    category: Optional[str] = None

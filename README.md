@@ -1,101 +1,126 @@
 # Hoyolab RSS Feeds
 
-Generator RSS untuk berita game Hoyoverse dalam bahasa Indonesia.
+Generate RSS/JSON feeds for Hoyoverse game news.
 
-## Deskripsi
+## Description
 
-Aplikasi ini membuat feed RSS dari berita resmi game Hoyoverse seperti Genshin Impact, Honkai: Star Rail, Zenless Zone Zero, dan lainnya. Semua feed, pesan, dan dokumentasi menggunakan bahasa Indonesia.
+This application creates RSS and JSON feeds from official Hoyoverse game news such as Genshin Impact, Honkai: Star Rail, Zenless Zone Zero, and more.
 
-## Instalasi
+## Installation
 
 ```bash
 pip install hoyolab-rss-feeds
 ```
 
-## Penggunaan
+## Usage
 
 ### CLI
 
-Anda dapat menjalankan aplikasi seperti ini:
+You can run the application like this:
 
 ```bash
 hoyolab-rss-feeds
 ```
 
-atau sebagai modul:
+or as module:
 
 ```bash
 python -m hoyolabrssfeeds
 ```
 
-Jika konfigurasi tidak ditemukan, aplikasi akan membuat konfigurasi default di direktori saat ini (`./hoyolab-rss-feeds.toml`) dan keluar. Silakan edit file konfigurasi sesuai kebutuhan Anda.
+If no configuration can be found, the application will create a default config in your current directory (`./hoyolab-rss-feeds.toml`) and will exit afterward.
 
-Anda dapat menentukan jalur untuk file konfigurasi dengan parameter:
-
-```bash
-hoyolab-rss-feeds -c path/ke/config.toml
-```
-
-Anda juga dapat menentukan direktori output:
+You can specify a path for the config file with a parameter:
 
 ```bash
-hoyolab-rss-feeds -o path/ke/output
+hoyolab-rss-feeds -c path/to/config.toml
 ```
 
-### Modul
+### Module
 
-Anda juga dapat membuat feed melalui kode:
+It is also possible to generate the feeds via code:
 
 ```python
 from pathlib import Path
 from hoyolabrssfeeds import FeedConfigLoader, GameFeed, GameFeedCollection, Game
 
 async def generate_feeds():
-    loader = FeedConfigLoader(Path("path/ke/config.toml"))
+    loader = FeedConfigLoader(Path("path/to/config.toml"))
     
-    # semua game dalam konfigurasi
-    all_configs = await loader.get_all_feed_configs()
-    feed_collection = GameFeedCollection.from_configs(all_configs)
+    # all games in config
+    global_config = loader.get_global_config()
+    all_configs = loader.get_all_game_configs()
+    feed_collection = GameFeedCollection.from_configs(all_configs, global_config)
     await feed_collection.create_feeds()
     
-    # hanya satu game
-    genshin_config = await loader.get_feed_config(Game.GENSHIN)
-    genshin_feed = GameFeed.from_config(genshin_config)
-    await genshin_feed.create_feed()
+    # only a single game
+    genshin_config = loader.get_game_config(Game.GENSHIN)
+    genshin_feed = GameFeed(Game.GENSHIN, genshin_config, global_config)
+    await genshin_feed.create_feeds()
 ```
 
-## Konfigurasi
+## Configuration
 
-File konfigurasi menggunakan format TOML. Berikut contoh konfigurasi:
+In the TOML config file you can define for which games you want to create a feed and in which format the feeds should be. Here is an example config:
 
 ```toml
+language = "en-us"
+category_size = 15
+
 [genshin]
-enabled = true
-title = "Genshin Impact - Berita Resmi"
-description = "Feed RSS untuk berita dan pengumuman Genshin Impact dari Hoyolab"
-link = "https://www.hoyolab.com/genshin/"
-output_file = "genshin-impact.xml"
-language = "id"
-max_items = 20
+feed.json.path = "feeds/genshin.json"
+feed.json.url = "https://example.org/genshin.json"
+feed.atom.path = "feeds/genshin.xml"
+feed.atom.url = "https://example.org/genshin.xml"
+categories = ["Info", "Notices"]
+category_size = 20
+title = "Genshin Impact News"
+icon = "https://example.org/genshin-icon.png"
+description = "Latest news and announcements for Genshin Impact"
 
 [starrail]
-enabled = true
-title = "Honkai: Star Rail - Berita Resmi"
-description = "Feed RSS untuk berita dan pengumuman Honkai: Star Rail dari Hoyolab"
-link = "https://www.hoyolab.com/starrail/"
-output_file = "honkai-star-rail.xml"
-language = "id"
-max_items = 20
+feed.json.path = "feeds/starrail.json"
+feed.json.url = "https://example.org/starrail.json"
+feed.atom.path = "feeds/starrail.xml"
+feed.atom.url = "https://example.org/starrail.xml"
+title = "Honkai: Star Rail News"
 ```
 
-## Game yang Didukung
+### Configuration Options
 
-- Genshin Impact
-- Honkai: Star Rail
-- Honkai Impact 3rd
-- Zenless Zone Zero
-- Tears of Themis
+**Global Settings:**
+- `language`: Feed language code (e.g., "en-us", "de-de", "ja-jp")
+- `category_size`: Default number of items per feed (can be overridden per game)
 
-## Lisensi
+**Per-Game Settings:**
+- `feed.json.path`: Path where JSON feed should be saved
+- `feed.json.url`: Public URL of the JSON feed
+- `feed.atom.path`: Path where Atom/RSS feed should be saved
+- `feed.atom.url`: Public URL of the Atom feed
+- `categories`: Filter news by categories (optional)
+- `category_size`: Override global category_size for this game (optional)
+- `title`: Feed title (optional, defaults to game name)
+- `icon`: Feed icon URL (optional)
+- `description`: Feed description (optional)
+
+You can configure feeds for one or both formats (JSON and Atom). Simply omit the format you don't need.
+
+## Supported Games
+
+- Genshin Impact (`genshin`)
+- Honkai: Star Rail (`starrail`)
+- Honkai Impact 3rd (`honkai`)
+- Zenless Zone Zero (`zenless`)
+- Tears of Themis (`tears_of_themis`)
+
+## Feed Formats
+
+### JSON Feed
+Generates feeds following the [JSON Feed 1.1](https://www.jsonfeed.org/version/1.1/) specification.
+
+### Atom Feed
+Generates standard Atom/RSS XML feeds compatible with all feed readers.
+
+## License
 
 MIT

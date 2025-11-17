@@ -13,8 +13,8 @@ MESSAGES = {
     "feed_collection_complete": "Semua feed RSS berhasil dibuat!",
     "invalid_game": "Game tidak valid: {game}",
     "help_config": "Jalur ke file konfigurasi TOML",
-    "help_output": "Direktori output untuk file RSS",
     "api_error": "Kesalahan saat mengambil berita: {error}",
+    "no_feeds_configured": "Tidak ada game dengan output feed yang dikonfigurasi. Periksa file konfigurasi Anda.",
 }
 
 GAME_NAMES = {

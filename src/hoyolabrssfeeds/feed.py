@@ -1,78 +1,144 @@
 """Generator feed RSS untuk berita game Hoyoverse."""
 
+import json
 from datetime import datetime, timezone
 from pathlib import Path
 from feedgen.feed import FeedGenerator
-from .models import Game, FeedConfig, NewsItem
+from .models import Game, GameConfig, GlobalConfig, NewsItem
 from .api import HoyolabAPIClient
 from .localization import get_message
 
 
 class GameFeed:
-    """Generator feed RSS untuk satu game."""
+    """Generator feed untuk satu game."""
     
-    def __init__(self, game: Game, config: FeedConfig):
+    def __init__(self, game: Game, game_config: GameConfig, global_config: GlobalConfig):
         self.game = game
-        self.config = config
+        self.game_config = game_config
+        self.global_config = global_config
         self.api_client = HoyolabAPIClient()
     
-    @classmethod
-    def from_config(cls, config: tuple[Game, FeedConfig]) -> "GameFeed":
-        """Buat GameFeed dari tuple konfigurasi."""
-        game, feed_config = config
-        return cls(game, feed_config)
-    
-    async def create_feed(self, output_dir: Path = Path("./feeds")) -> Path:
+    async def create_feeds(self) -> list[Path]:
         """
-        Buat feed RSS untuk game ini.
-        
-        Args:
-            output_dir: Direktori untuk menyimpan file RSS
+        Buat feed untuk game ini dalam semua format yang dikonfigurasi.
         
         Returns:
-            Path ke file RSS yang dibuat
+            List of paths ke file feed yang dibuat
         """
         print(get_message("generating_feeds", game=self.game.display_name))
+        
+        category_size = self.game_config.category_size or self.global_config.category_size
         
         async with self.api_client:
             news_items = await self.api_client.get_news(
                 self.game,
-                page_size=self.config.max_items
+                page_size=category_size
             )
         
         if not news_items:
             print(get_message("no_news_found", game=self.game.display_name))
+            return []
+        
+        paths = []
+        
+        if self.game_config.feed.json_feed and self.game_config.feed.json_feed.path:
+            json_path = await self._create_json_feed(news_items)
+            paths.append(json_path)
+        
+        if self.game_config.feed.atom_feed and self.game_config.feed.atom_feed.path:
+            atom_path = await self._create_atom_feed(news_items)
+            paths.append(atom_path)
+        
+        return paths
+    
+    async def _create_json_feed(self, news_items: list[NewsItem]) -> Path:
+        """Buat feed dalam format JSON."""
+        json_config = self.game_config.feed.json_feed
+        assert json_config is not None
+        
+        feed_data = {
+            "version": "https://jsonfeed.org/version/1.1",
+            "title": self.game_config.title or f"{self.game.display_name} News",
+            "home_page_url": f"https://www.hoyolab.com/{self.game.value}/",
+            "feed_url": json_config.url or "",
+            "language": self.global_config.language,
+            "items": []
+        }
+        
+        if self.game_config.icon:
+            feed_data["icon"] = self.game_config.icon
+        
+        if self.game_config.description:
+            feed_data["description"] = self.game_config.description
+        
+        for item in news_items:
+            feed_item = {
+                "id": item.url,
+                "url": item.url,
+                "title": item.title,
+                "content_html": item.content[:500] + "..." if len(item.content) > 500 else item.content,
+                "date_published": datetime.fromtimestamp(item.created_at, tz=timezone.utc).isoformat()
+            }
+            
+            if item.cover_url:
+                feed_item["image"] = item.cover_url
+            
+            if item.author:
+                feed_item["author"] = {"name": item.author}
+            
+            feed_data["items"].append(feed_item)
+        
+        assert json_config.path is not None
+        output_path = Path(json_config.path)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        
+        with open(output_path, "w", encoding="utf-8") as f:
+            json.dump(feed_data, f, ensure_ascii=False, indent=2)
+        
+        print(get_message("feed_generated", path=output_path))
+        return output_path
+    
+    async def _create_atom_feed(self, news_items: list[NewsItem]) -> Path:
+        """Buat feed dalam format Atom/RSS."""
+        atom_config = self.game_config.feed.atom_feed
+        assert atom_config is not None
         
         fg = FeedGenerator()
-        fg.title(self.config.title)
-        fg.description(self.config.description)
-        fg.link(href=self.config.link)
-        fg.language(self.config.language)
-        fg.id(self.config.link)
+        fg.title(self.game_config.title or f"{self.game.display_name} News")
+        fg.link(href=f"https://www.hoyolab.com/{self.game.value}/")
+        fg.language(self.global_config.language)
+        
+        if atom_config.url:
+            fg.id(atom_config.url)
+        else:
+            fg.id(f"https://www.hoyolab.com/{self.game.value}/")
+        
+        if self.game_config.description:
+            fg.description(self.game_config.description)
+        else:
+            fg.description(f"News and announcements for {self.game.display_name}")
+        
+        if self.game_config.icon:
+            fg.logo(self.game_config.icon)
         
         for item in news_items:
             fe = fg.add_entry()
             fe.id(item.url)
             fe.title(item.title)
             fe.link(href=item.url)
-            fe.description(self._clean_content(item.content))
+            fe.description(item.content[:500] + "..." if len(item.content) > 500 else item.content)
             fe.published(datetime.fromtimestamp(item.created_at, tz=timezone.utc))
             
             if item.author:
                 fe.author(name=item.author)
         
-        output_dir.mkdir(parents=True, exist_ok=True)
-        output_path = output_dir / self.config.output_file
-        fg.rss_file(str(output_path))
+        assert atom_config.path is not None
+        output_path = Path(atom_config.path)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        fg.atom_file(str(output_path))
         
         print(get_message("feed_generated", path=output_path))
         return output_path
-    
-    def _clean_content(self, content: str) -> str:
-        """Bersihkan konten HTML untuk feed."""
-        if len(content) > 500:
-            return content[:497] + "..."
-        return content
 
 
 class GameFeedCollection:
@@ -82,31 +148,50 @@ class GameFeedCollection:
         self.feeds = feeds
     
     @classmethod
-    def from_configs(cls, configs: dict[Game, FeedConfig]) -> "GameFeedCollection":
-        """Buat koleksi dari dictionary konfigurasi."""
-        feeds = [
-            GameFeed(game, config)
-            for game, config in configs.items()
-            if config.enabled
-        ]
-        return cls(feeds)
-    
-    async def create_feeds(self, output_dir: Path = Path("./feeds")) -> list[Path]:
+    def from_configs(
+        cls,
+        game_configs: dict[Game, GameConfig],
+        global_config: GlobalConfig
+    ) -> "GameFeedCollection":
         """
-        Buat semua feed RSS.
+        Buat koleksi dari dictionary konfigurasi.
         
         Args:
-            output_dir: Direktori untuk menyimpan file RSS
+            game_configs: Dictionary of game configurations
+            global_config: Global configuration settings
+            
+        Returns:
+            GameFeedCollection instance
+            
+        Raises:
+            ValueError: If no games have feed outputs configured
+        """
+        from .localization import get_message
+        
+        feeds = [
+            GameFeed(game, config, global_config)
+            for game, config in game_configs.items()
+            if config.feed.json_feed or config.feed.atom_feed
+        ]
+        
+        if not feeds:
+            raise ValueError(get_message("no_feeds_configured"))
+        
+        return cls(feeds)
+    
+    async def create_feeds(self) -> list[Path]:
+        """
+        Buat semua feed.
         
         Returns:
-            List of paths ke file RSS yang dibuat
+            List of paths ke file feed yang dibuat
         """
         print(get_message("feed_collection_start"))
         
-        paths = []
+        all_paths = []
         for feed in self.feeds:
-            path = await feed.create_feed(output_dir)
-            paths.append(path)
+            paths = await feed.create_feeds()
+            all_paths.extend(paths)
         
         print(get_message("feed_collection_complete"))
-        return paths
+        return all_paths

@@ -1,64 +1,76 @@
 # Hoyolab RSS Feeds
 
-## Gambaran Umum
-Aplikasi Python CLI untuk membuat feed RSS dari berita game Hoyoverse (Genshin Impact, Honkai: Star Rail, Zenless Zone Zero, dll) dengan antarmuka dan pesan dalam bahasa Indonesia.
+## Overview
+Python CLI application to create RSS and JSON feeds from Hoyoverse game news (Genshin Impact, Honkai: Star Rail, Zenless Zone Zero, etc).
 
-## Tanggal Dibuat
+## Created
 17 November 2025
 
-## Struktur Proyek
+## Project Structure
 ```
 src/hoyolabrssfeeds/
-├── __init__.py           # Ekspor utama paket
-├── __main__.py           # Entry point untuk python -m hoyolabrssfeeds
-├── cli.py                # Interface CLI dengan Click
-├── models.py             # Model data (Game, FeedConfig, NewsItem)
-├── api.py                # Klien API Hoyolab
-├── feed.py               # Generator RSS feed
-├── config.py             # Loader konfigurasi TOML
-└── localization.py       # Teks bahasa Indonesia
+├── __init__.py           # Main package exports
+├── __main__.py           # Entry point for python -m hoyolabrssfeeds
+├── cli.py                # CLI interface with Click
+├── models.py             # Data models (Game, GameConfig, GlobalConfig, NewsItem)
+├── api.py                # Hoyolab API client
+├── feed.py               # RSS/JSON feed generator
+├── config.py             # TOML configuration loader
+└── localization.py       # Localized messages (configurable via TOML)
 ```
 
-## Fitur Utama
-- CLI untuk membuat feed RSS dari berita Hoyolab
-- Dukungan untuk 5 game Hoyoverse
-- Semua pesan dan antarmuka dalam bahasa Indonesia
-- Konfigurasi TOML yang mudah diedit
-- API untuk penggunaan programatik
-- Feed RSS yang dapat disesuaikan per game
+## Key Features
+- CLI tool to create RSS and JSON feeds from Hoyolab news
+- Support for 5 Hoyoverse games
+- Dual feed format support: JSON Feed 1.1 and Atom/RSS
+- Flexible TOML configuration with global and per-game settings
+- Configurable language support (not hardcoded)
+- API for programmatic usage
+- Per-game customization: title, icon, description, categories, item count
 
-## Penggunaan
+## Usage
 
 ### CLI
 ```bash
-# Generate feeds dengan config default
+# Generate feeds with default config
 hoyolab-rss-feeds
 
 # Specify custom config path
 hoyolab-rss-feeds -c path/to/config.toml
-
-# Specify output directory
-hoyolab-rss-feeds -o path/to/output
 ```
 
-### Modul Python
+### Python Module
 ```python
 from pathlib import Path
 from hoyolabrssfeeds import FeedConfigLoader, GameFeedCollection
 
 loader = FeedConfigLoader(Path("config.toml"))
-configs = await loader.get_all_feed_configs()
-collection = GameFeedCollection.from_configs(configs)
+global_config = loader.get_global_config()
+game_configs = loader.get_all_game_configs()
+collection = GameFeedCollection.from_configs(game_configs, global_config)
 await collection.create_feeds()
 ```
 
-## Teknologi
+## Configuration Format
+Global settings (language, category_size) + per-game settings with flexible feed formats:
+```toml
+language = "en-us"
+category_size = 15
+
+[genshin]
+feed.json.path = "feeds/genshin.json"
+feed.atom.path = "feeds/genshin.xml"
+title = "Genshin Impact News"
+category_size = 20
+```
+
+## Technologies
 - Python 3.11+
-- feedgen - Membuat feed RSS/Atom
-- httpx - HTTP client async
+- feedgen - Generate Atom/RSS feeds
+- httpx - Async HTTP client
 - click - CLI framework
-- pydantic - Validasi data
-- tomli/tomli-w - Parser TOML
+- pydantic - Data validation with aliases
+- tomli/tomli-w - TOML parser
 
 ## Status
-Aplikasi lengkap dan berfungsi. Workflow aktif menghasilkan feeds dari Hoyolab API.
+Application complete and functional. Workflow actively generates both JSON and Atom feeds from Hoyolab API.
