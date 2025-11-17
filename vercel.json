@@ -2,5 +2,6 @@
   "rewrites": [
     { "source": "/genshin.xml", "destination": "/api/feed?game=genshin" },
     { "source": "/hsr.xml", "destination": "/api/feed?game=hsr" }
+    { "source": "/zzz.xml", "destination": "/api/feed?game=zzz" }
   ]
 }

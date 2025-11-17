@@ -20,29 +20,7 @@ export default async function handler(req, res) {
   };
 
   try {
-    // robust URL parsing: req.url may be absolute or path-only
-    let urlObj;
-    try {
-      urlObj = new URL(req.url); // works if absolute
-    } catch (e) {
-      const hostHeader = req.headers && (req.headers.host || req.headers.get && req.headers.get("host"));
-      const host = hostHeader || "localhost:3000";
-      const base = host.includes("://") ? host : `http://${host}`;
-      urlObj = new URL(req.url, base);
-    }
-
-    const type = (urlObj.searchParams.get("type") || "").toLowerCase();
-    if (!["hsr", "genshin"].includes(type)) {
-      return sendJSON(
-        {
-          ok: false,
-          message: "Provide ?type=hsr or ?type=genshin",
-          example: "/api/feed?type=hsr",
-        },
-        400
-      );
-    }
-
+    // CONFIG moved before validation so we can validate dynamically
     const CONFIG = {
       hsr: {
         label: "Honkai: Star Rail (id)",
@@ -58,15 +36,41 @@ export default async function handler(req, res) {
       },
       zzz: {
         label: "Zenless Zone Zero (ID)",
-        // linkBase is used to build fallback item links; a best-effort value is fine
         linkBase: "https://zenless.hoyoverse.com/id-id/news",
         api:
-          "https://sg-public-api-static.hoyoverse.com/content_v2_user/app/3e9196a4b9274bd7/getContentList?iPageSize=20&iPage=1&iChanId=288&sLangKey=id-id"
+          "https://sg-public-api-static.hoyoverse.com/content_v2_user/app/3e9196a4b9274bd7/getContentList?iPageSize=20&iPage=1&iChanId=288&sLangKey=id-id",
       },
-
     };
 
+    // robust URL parsing: req.url may be absolute or path-only
+    let urlObj;
+    try {
+      urlObj = new URL(req.url); // works if absolute
+    } catch (e) {
+      // Node/Next request headers vary; try both shapes
+      const hostHeader =
+        (req.headers && (req.headers.host || (typeof req.headers.get === "function" && req.headers.get("host")))) ||
+        null;
+      const host = hostHeader || "localhost:3000";
+      const base = host.includes("://") ? host : `http://${host}`;
+      urlObj = new URL(req.url, base);
+    }
+
+    const type = (urlObj.searchParams.get("type") || "").toLowerCase();
+    log("type:", type);
+
     const conf = CONFIG[type];
+    if (!conf) {
+      return sendJSON(
+        {
+          ok: false,
+          message: "Provide ?type with one of the available options",
+          available: Object.keys(CONFIG),
+          example: "/api/feed?type=hsr",
+        },
+        400
+      );
+    }
 
     // Abortable fetch with timeout to avoid "eternal loading"
     const FETCH_TIMEOUT_MS = 10000; // 10 seconds
@@ -79,6 +83,7 @@ export default async function handler(req, res) {
         headers: {
           Accept: "application/json, text/plain, */*",
           Referer: conf.linkBase,
+          // Vercel/Node allows default UA but send a simple one for predictable responses
           "User-Agent": "Mozilla/5.0 (compatible; feed-builder/1.0)",
         },
         signal: controller.signal,
@@ -86,9 +91,8 @@ export default async function handler(req, res) {
     } catch (fetchErr) {
       clearTimeout(timeoutId);
       log("fetch error:", fetchErr && fetchErr.message ? fetchErr.message : fetchErr);
-      // If aborted, give specific message
       if (fetchErr && fetchErr.name === "AbortError") {
-        return sendJSON({ ok: false, message: "Upstream fetch timed out (10s)" }, 504);
+        return sendJSON({ ok: false, message: `Upstream fetch timed out (${FETCH_TIMEOUT_MS / 1000}s)` }, 504);
       }
       return sendJSON({ ok: false, message: "Upstream fetch failed", detail: String(fetchErr) }, 502);
     }
@@ -123,8 +127,10 @@ export default async function handler(req, res) {
     function parseDateToRfc822(dtStr) {
       if (!dtStr) return new Date().toUTCString();
       try {
-        const iso = dtStr.replace(" ", "T") + "Z";
-        const d = new Date(iso);
+        // upstream often gives "YYYY-MM-DD HH:MM:SS" - convert to ISO-ish
+        const iso = dtStr.includes("T") ? dtStr : dtStr.replace(" ", "T");
+        const withZ = iso.endsWith("Z") ? iso : iso + "Z";
+        const d = new Date(withZ);
         if (isNaN(d.getTime())) return new Date().toUTCString();
         return d.toUTCString();
       } catch (e) {
@@ -136,7 +142,14 @@ export default async function handler(req, res) {
       if (!item) return null;
       try {
         let ext = item.sExt;
-        if (typeof ext === "string" && ext.trim()) ext = JSON.parse(ext);
+        if (typeof ext === "string" && ext.trim()) {
+          try {
+            ext = JSON.parse(ext);
+          } catch (e) {
+            // sometimes sExt is not JSON — ignore
+            ext = null;
+          }
+        }
         if (ext && typeof ext === "object") {
           if (Array.isArray(ext["news-poster"]) && ext["news-poster"][0] && ext["news-poster"][0].url)
             return ext["news-poster"][0].url;
@@ -163,7 +176,7 @@ export default async function handler(req, res) {
           p && (p.iInfoId !== undefined && p.iInfoId !== null) ? String(p.iInfoId) : Math.random().toString(36).slice(2);
         const title = escapeXml(p.sTitle || p.title || "No title");
         const intro = p.sIntro || "";
-        const pubDate = parseDateToRfc822(p.dtStartTime || p.dtCreateTime);
+        const pubDate = parseDateToRfc822(p.dtStartTime || p.dtCreateTime || p.dtCreate);
         const link = p.sUrl && p.sUrl.trim() ? p.sUrl : `${conf.linkBase}/${id}`;
         const imageUrl = extractImageUrl(p);
 
@@ -180,7 +193,7 @@ export default async function handler(req, res) {
 
         const enclosure = imageUrl ? `<enclosure url="${escapeXml(imageUrl)}" type="image/*" />` : "";
 
-        return `
+        return `\
       <item>
         <title>${title}</title>
         <link>${escapeXml(link)}</link>
@@ -204,10 +217,12 @@ export default async function handler(req, res) {
 </rss>`;
 
     res.setHeader("Content-Type", "application/rss+xml; charset=utf-8");
+    // small caching policy: no-cache for development; change for production if desired
     res.setHeader("Cache-Control", "no-cache, no-store, max-age=0");
     return res.status(200).send(rss);
   } catch (err) {
     console.error("[/api/feed] internal error:", err);
+    // ensure we don't leak internal error shapes in prod; simple text is fine
     return sendText("Internal error", 500);
   }
 }
