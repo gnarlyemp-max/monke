@@ -46,7 +46,7 @@ export default async function handler(req, res) {
     const CONFIG = {
       hsr: {
         label: "Honkai: Star Rail (id)",
-        linkBase: "https://hsr.hoyoverse.com/id-id/news/",
+        linkBase: "https://hsr.hoyoverse.com/id-id/news",
         api:
           "https://sg-public-api-static.hoyoverse.com/content_v2_user/app/113fe6d3b4514cdd/getContentList?iPage=1&iPageSize=20&sLangKey=id-id&isPreview=0&iChanId=248",
       },
