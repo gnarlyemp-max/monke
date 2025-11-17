@@ -121,6 +121,48 @@ Generates feeds following the [JSON Feed 1.1](https://www.jsonfeed.org/version/1
 ### Atom Feed
 Generates standard Atom/RSS XML feeds compatible with all feed readers.
 
+## Vercel Deployment
+
+You can deploy this application to Vercel to make the RSS feeds available online.
+
+### Prerequisites
+- Vercel account
+- Vercel CLI installed (`npm install -g vercel`)
+
+### Deployment Steps
+1. Create a `hoyolab-rss-feeds.toml` configuration file in your project root
+2. Install dependencies with `pip install -r requirements.txt`
+3. Deploy with Vercel:
+```bash
+vercel
+```
+4. Follow the prompts to complete the deployment
+
+### API Endpoints
+Once deployed, you can access the feeds through these endpoints:
+
+```
+GET /api/feed?game=[game]&format=[format]
+```
+
+Where:
+- `game`: Game name (`genshin`, `starrail`, `honkai`, `zenless`, `tears_of_themis`, or `all`)
+- `format`: Feed format (`atom`, `json`, or `all`)
+
+Examples:
+```
+GET /api/feed?game=genshin&format=atom    # Genshin Atom feed
+GET /api/feed?game=starrail&format=json   # Star Rail JSON feed
+GET /api/feed?game=all&format=json        # JSON feeds for all games
+```
+
+The feeds are also available directly:
+- `/genshin.xml`
+- `/starrail.json`
+- `/honkai.xml`
+- `/zenless.xml`
+- `/tears_of_themis.xml`
+
 ## License
 
 MIT

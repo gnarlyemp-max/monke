@@ -1,0 +1,33 @@
+{
+  "version": 2,
+  "builds": [
+    {
+      "src": "api/feed.py",
+      "use": "@vercel/python"
+    }
+  ],
+  "routes": [
+    {
+      "src": "/api/feed",
+      "dest": "api/feed.py"
+    },
+    {
+      "src": "/api/feed/(.*)",
+      "dest": "api/feed.py"
+    },
+    {
+      "src": "/(?:atom|json)/(.*)\\.(xml|json)",
+      "dest": "/tmp/feeds/$1.$2"
+    },
+    {
+      "src": "/(.*)\\.(xml|json)",
+      "dest": "/tmp/feeds/$1.$2"
+    }
+  ],
+  "functions": {
+    "api/feed.py": {
+      "memory": 1024,
+      "maxDuration": 10
+    }
+  }
+}

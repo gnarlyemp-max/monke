@@ -7,7 +7,7 @@ channel = "stable-25_05"
 packages = ["libxcrypt"]
 
 [workflows]
-runButton = "Project"
+runButton = "hoyolab-rss-feeds"
 
 [[workflows.workflow]]
 name = "Project"
