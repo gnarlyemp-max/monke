@@ -10,24 +10,6 @@
     {
       "src": "/api/feed",
       "dest": "api/feed.py"
-    },
-    {
-      "src": "/api/feed/(.*)",
-      "dest": "api/feed.py"
-    },
-    {
-      "src": "/(?:atom|json)/(.*)\\.(xml|json)",
-      "dest": "/tmp/feeds/$1.$2"
-    },
-    {
-      "src": "/(.*)\\.(xml|json)",
-      "dest": "/tmp/feeds/$1.$2"
     }
-  ],
-  "functions": {
-    "api/feed.py": {
-      "includeFiles": "src/**",
-      "excludeFiles": "node_modules/**,tests/**"
-    }
-  }
+  ]
 }

@@ -1,241 +1,105 @@
-#!/usr/bin/env python
 import asyncio
 import json
-from http import HTTPStatus
+import os
+from http.server import BaseHTTPRequestHandler
 from pathlib import Path
 import sys
+from urllib.parse import urlparse, parse_qs
 
-# Add the project root to the Python path to ensure imports work
-project_root = Path(__file__).parent.parent
-sys.path.insert(0, str(project_root))
 
-# Add src directory to Python path for the hoyolabrssfeeds package
-src_path = project_root / "src"
-if str(src_path) not in sys.path:
-    sys.path.insert(0, str(src_path))
+from hoyolabrssfeeds.cli import generate_feeds
+from hoyolabrssfeeds.config import FeedConfigLoader
 
-# Debug: Print Python path to help with troubleshooting
-print("Python path:", sys.path)
-
-# Verify the module can be found
-try:
-    import importlib.util
-    spec = importlib.util.find_spec("hoyolabrssfeeds")
-    if spec is None:
-        print("Module 'hoyolabrssfeeds' not found in path")
-        # Try adding the src directory directly
-        hoyolab_module_path = src_path / "hoyolabrssfeeds"
-        if hoyolab_module_path.exists():
-            print(f"Module directory found at: {hoyolab_module_path}")
-            sys.path.insert(0, str(hoyolab_module_path))
-        else:
-            print(f"Module directory not found at: {hoyolab_module_path}")
-    else:
-        print(f"Module 'hoyolabrssfeeds' found at: {spec.origin}")
-except Exception as e:
-    print(f"Error checking module: {e}")
-
-# Import the required functions
-try:
-    from hoyolabrssfeeds.cli import generate_feeds
-    from hoyolabrssfeeds.config import FeedConfigLoader
-    print("Successfully imported hoyolabrssfeeds modules")
-except ImportError as e:
-    print(f"Import error: {e}")
-    # Fallback: try to import directly from files
-    try:
-        # Add the specific module path to sys.path
-        module_path = src_path / "hoyolabrssfeeds"
-        sys.path.insert(0, str(module_path))
+class handler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        parsed_path = urlparse(self.path)
+        query_params = parse_qs(parsed_path.query)
         
-        import cli
-        import config
-        generate_feeds = cli.generate_feeds
-        FeedConfigLoader = config.FeedConfigLoader
-        print("Successfully imported modules using fallback method")
-    except Exception as fallback_error:
-        print(f"Fallback import failed: {fallback_error}")
-        # Last resort: try to import from the current directory structure
-        try:
-            sys.path.insert(0, str(project_root))
-            from src.hoyolabrssfeeds.cli import generate_feeds
-            from src.hoyolabrssfeeds.config import FeedConfigLoader
-            print("Successfully imported using project root path")
-        except Exception as final_error:
-            print(f"Final import attempt failed: {final_error}")
-            raise
+        game = query_params.get('game', ['all'])[0]
+        format_type = query_params.get('format', ['atom'])[0]
 
-async def main(request):
-    """
-    Vercel serverless function to generate and serve Hoyolab RSS feeds.
-    
-    This function:
-    1. Creates a temporary config file with output paths in /tmp
-    2. Generates the RSS feeds
-    3. Reads the generated feed content
-    4. Returns the feed content with appropriate headers
-    """
-    
-    # Default response headers
-    headers = {
-        'Content-Type': 'application/json',
-        'Access-Control-Allow-Origin': '*',
-        'Access-Control-Allow-Methods': 'GET, OPTIONS',
-        'Access-Control-Allow-Headers': 'Content-Type',
-    }
-    
-    # Handle preflight OPTIONS request
-    if request.get('method') == 'OPTIONS':
-        return {
-            'statusCode': HTTPStatus.NO_CONTENT,
-            'headers': headers,
-            'body': ''
+        feeds_dir = Path('/tmp/feeds')
+        feeds_dir.mkdir(exist_ok=True)
+
+        temp_config = {
+            'language': 'en-us',
+            'category_size': 15,
         }
-    
-    # Get query parameters
-    query_params = request.get('query', {})
-    game = query_params.get('game', 'all')
-    format_type = query_params.get('format', 'atom')
-    
-    # Define feed paths based on query parameters
-    feeds_dir = Path('/tmp/feeds')
-    feeds_dir.mkdir(exist_ok=True)
-    
-    if game != 'all':
-        # Single game feed
-        game_paths = {}
-        if format_type in ['atom', 'json', 'all']:
-            if format_type == 'atom':
-                game_paths[f'{game}.xml'] = str(feeds_dir / f'{game}.xml')
-            elif format_type == 'json':
-                game_paths[f'{game}.json'] = str(feeds_dir / f'{game}.json')
-            else:  # all
-                game_paths[f'{game}.xml'] = str(feeds_dir / f'{game}.xml')
-                game_paths[f'{game}.json'] = str(feeds_dir / f'{game}.json')
-        feed_paths = {game: game_paths}
-    else:
-        # All games
-        feed_paths = {}
-        games = ['genshin', 'starrail', 'honkai', 'zenless', 'tears_of_themis']
-        for g in games:
-            feed_paths[g] = {}
-            if format_type in ['atom', 'all']:
-                feed_paths[g][f'{g}.xml'] = str(feeds_dir / f'{g}.xml')
-            if format_type in ['json', 'all']:
-                feed_paths[g][f'{g}.json'] = str(feeds_dir / f'{g}.json')
-    
-    # Create temporary config
-    temp_config = {
-        'language': 'en-us',
-        'category_size': 15,
-    }
-    
-    for game_name, formats in feed_paths.items():
-        temp_config[game_name] = {
-            'feed': {}
-        }
-        for format_name, path in formats.items():
-            if format_name.endswith('.xml'):
-                temp_config[game_name]['feed']['atom'] = {
-                    'path': path,
-                    'url': f'https://{request.get("headers", {}).get("host", "localhost")}/{format_name}'
-                }
-            elif format_name.endswith('.json'):
-                temp_config[game_name]['feed']['json'] = {
-                    'path': path,
-                    'url': f'https://{request.get("headers", {}).get("host", "localhost")}/{format_name}'
-                }
-    
-    # Write temporary config
-    temp_config_path = Path('/tmp/hoyolab-rss-feeds.toml')
-    with open(temp_config_path, 'w') as f:
-        json.dump(temp_config, f)
-    
-    # Generate feeds
-    try:
-        await generate_feeds(temp_config_path)
-        
-        # Read the generated feed
+
+        host = self.headers.get('host', 'localhost')
+
         if game != 'all':
-            if format_type == 'atom':
-                feed_file = feeds_dir / f'{game}.xml'
-                if feed_file.exists():
-                    content_type = 'application/xml'
-                    with open(feed_file, 'r') as f:
-                        body = f.read()
-                else:
-                    return {
-                        'statusCode': HTTPStatus.NOT_FOUND,
-                        'headers': headers,
-                        'body': json.dumps({'error': f'Atom feed for {game} not found'})
+            if format_type in ['atom', 'json', 'all']:
+                temp_config[game] = {'feed': {}}
+                if format_type == 'atom' or format_type == 'all':
+                    temp_config[game]['feed']['atom'] = {
+                        'path': str(feeds_dir / f'{game}.xml'),
+                        'url': f'https://{host}/{game}.xml'
                     }
-            elif format_type == 'json':
-                feed_file = feeds_dir / f'{game}.json'
-                if feed_file.exists():
-                    content_type = 'application/json'
-                    with open(feed_file, 'r') as f:
-                        body = f.read()
-                else:
-                    return {
-                        'statusCode': HTTPStatus.NOT_FOUND,
-                        'headers': headers,
-                        'body': json.dumps({'error': f'JSON feed for {game} not found'})
+                if format_type == 'json' or format_type == 'all':
+                    temp_config[game]['feed']['json'] = {
+                        'path': str(feeds_dir / f'{game}.json'),
+                        'url': f'https://{host}/{game}.json'
                     }
-            else:
-                # Return list of generated files
-                generated_files = []
-                for f in feeds_dir.iterdir():
-                    if f.name.startswith(game):
-                        generated_files.append(f.name)
-                
-                return {
-                    'statusCode': HTTPStatus.OK,
-                    'headers': {**headers, 'Content-Type': 'application/json'},
-                    'body': json.dumps({
-                        'message': f'Feeds generated for {game}',
-                        'files': generated_files
-                    })
-                }
         else:
-            # Return list of all generated files
-            generated_files = []
-            for f in feeds_dir.iterdir():
-                generated_files.append(f.name)
-            
-            return {
-                'statusCode': HTTPStatus.OK,
-                'headers': {**headers, 'Content-Type': 'application/json'},
-                'body': json.dumps({
-                    'message': 'Feeds generated for all games',
-                    'files': generated_files
-                })
-            }
-        
-        # Return the feed content
-        return {
-            'statusCode': HTTPStatus.OK,
-            'headers': {**headers, 'Content-Type': content_type},
-            'body': body
-        }
-        
-    except Exception as e:
-        return {
-            'statusCode': HTTPStatus.INTERNAL_SERVER_ERROR,
-            'headers': headers,
-            'body': json.dumps({'error': str(e)})
-        }
+            games = ['genshin', 'starrail', 'honkai', 'zenless', 'tears_of_themis']
+            for g in games:
+                temp_config[g] = {'feed': {}}
+                if format_type in ['atom', 'all']:
+                    temp_config[g]['feed']['atom'] = {
+                        'path': str(feeds_dir / f'{g}.xml'),
+                        'url': f'https://{host}/{g}.xml'
+                    }
+                if format_type in ['json', 'all']:
+                    temp_config[g]['feed']['json'] = {
+                        'path': str(feeds_dir / f'{g}.json'),
+                        'url': f'https://{host}/{g}.json'
+                    }
 
-def handler(event, context):
-    """Synchronous handler for Vercel serverless function."""
-    # Convert Vercel event to request object
-    request = {
-        'method': event['httpMethod'],
-        'query': event.get('queryStringParameters', {}) or {},
-        'headers': event.get('headers', {}),
-        'body': event.get('body', '')
-    }
-    
-    # Run async main function
-    result = asyncio.run(main(request))
-    
-    return result
+        temp_config_path = Path('/tmp/hoyolab-rss-feeds.toml')
+        with open(temp_config_path, 'w') as f:
+            # Use tomli_w to write the config
+            import tomli_w
+            tomli_w.dump(temp_config, f)
+
+        try:
+            asyncio.run(generate_feeds(temp_config_path))
+
+            if game != 'all' and format_type in ['atom', 'json']:
+                if format_type == 'atom':
+                    feed_file = feeds_dir / f'{game}.xml'
+                    content_type = 'application/xml'
+                else:
+                    feed_file = feeds_dir / f'{game}.json'
+                    content_type = 'application/json'
+                
+                if feed_file.exists():
+                    self.send_response(200)
+                    self.send_header('Content-type', content_type)
+                    self.send_header('Access-Control-Allow-Origin', '*')
+                    self.end_headers()
+                    with open(feed_file, 'rb') as f:
+                        self.wfile.write(f.read())
+                else:
+                    self.send_response(404)
+                    self.send_header('Content-type', 'application/json')
+                    self.end_headers()
+                    self.wfile.write(json.dumps({'error': 'Feed not found'}).encode('utf-8'))
+            else:
+                generated_files = [f.name for f in feeds_dir.iterdir() if f.is_file()]
+                self.send_response(200)
+                self.send_header('Content-type', 'application/json')
+                self.send_header('Access-Control-Allow-Origin', '*')
+                self.end_headers()
+                self.wfile.write(json.dumps({
+                    'message': 'Feeds generated successfully',
+                    'files': generated_files
+                }).encode('utf-8'))
+
+        except Exception as e:
+            self.send_response(500)
+            self.send_header('Content-type', 'application/json')
+            self.end_headers()
+            self.wfile.write(json.dumps({'error': str(e)}).encode('utf-8'))
+        
+        return
