@@ -56,6 +56,14 @@ export default async function handler(req, res) {
         api:
           "https://sg-public-api-static.hoyoverse.com/content_v2_user/app/a1b1f9d3315447cc/getContentList?iAppId=32&iChanId=395&iPageSize=20&iPage=1&sLangKey=id-id",
       },
+      zzz: {
+        label: "Zenless Zone Zero (ID)",
+        // linkBase is used to build fallback item links; a best-effort value is fine
+        linkBase: "https://zenless.hoyoverse.com/id-id/news",
+        api:
+          "https://sg-public-api-static.hoyoverse.com/content_v2_user/app/3e9196a4b9274bd7/getContentList?iPageSize=20&iPage=1&iChanId=288&sLangKey=id-id"
+      },
+
     };
 
     const conf = CONFIG[type];
