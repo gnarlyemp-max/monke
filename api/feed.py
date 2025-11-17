@@ -57,7 +57,7 @@ class handler(BaseHTTPRequestHandler):
                     }
 
         temp_config_path = Path('/tmp/hoyolab-rss-feeds.toml')
-        with open(temp_config_path, 'w') as f:
+        with open(temp_config_path, 'wb') as f:
             # Use tomli_w to write the config
             import tomli_w
             tomli_w.dump(temp_config, f)
